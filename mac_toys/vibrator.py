@@ -3,10 +3,12 @@ import time
 from asyncio import sleep, run
 from threading import Lock
 from random import uniform
+from signal import signal, SIGINT
 from buttplug import Client, WebsocketConnector, ProtocolSpec, Device, DisconnectedError
 from typing import Union, cast, Optional
 from mac_toys.sse_listener import SSEListener, ChatEvent, KillEvent
 from mac_toys.tracker import PlayerTracker, UpdateTypes
+from mac_toys.helpers import interpolate_value_bounded
 
 
 class Vibrator:
@@ -64,9 +66,9 @@ class Vibrator:
         self.queue_lock = Lock()
         self.vibrations = []
         self.current_vibration = 0.0
-        self.ambient_vibration = 0.20
-        self.ambient_vibration_variance = 0.2
-        self.ambient_vibration_change_rate = 2.0
+        self.ambient_vibration = 0.10
+        self.ambient_vibration_variance = 0.05
+        self.ambient_vibration_change_rate = 3.0
         self.ambient_vibration_change_rate_variance = 0.5
         self.computed_change_rate = self.ambient_vibration_change_rate
         self.computed_ambient_vibration = self.ambient_vibration
@@ -162,6 +164,15 @@ class Vibrator:
         return _now
 
 
+def abort(signum, frame):
+    print("Received exit signal, ending...")
+    _inst = SSEListener(event_endpoint=None)
+    if _inst.t_subscriber is not None:
+        _inst.shutdown_flag = True
+        _inst.t_subscriber.join()
+    exit(0)
+
+
 async def main():
     _vibe = Vibrator(ws_host="localhost")
     await _vibe.connect_and_scan()
@@ -199,17 +210,57 @@ async def main():
             elif isinstance(event, KillEvent):
                 # print(f"Kill: {event}")
                 _ks, _ds, _updates = _player_tracker.add_kill_event(event)
+                _vibe.ambient_vibration = max(
+                    interpolate_value_bounded(
+                        float(_ks), 0.0, 15.0, 0.1, 0.6
+                    ),
+                    interpolate_value_bounded(
+                        float(_ds), 0.0, 5.0, 0.1, 0.6
+                    )
+                )
+                _vibe.ambient_vibration_variance = max(
+                    interpolate_value_bounded(
+                        float(_ks), 0.0, 15.0, 0.05, 0.33
+                    ),
+                    interpolate_value_bounded(
+                        float(_ds), 0.0, 5.0, 0.05, 0.33
+                    )
+                )
+                _vibe.ambient_vibration_change_rate = min(
+                    interpolate_value_bounded(
+                        float(_ks), 0.0, 15.0, 6.9, 2.5
+                    ),
+                    interpolate_value_bounded(
+                        float(_ds), 0.0, 5.0, 6.9, 3.1
+                    )
+                )
+                _vibe.ambient_vibration_change_rate_variance = min(
+                    interpolate_value_bounded(
+                        float(_ks), 0.0, 15.0, 0.5, 0.2
+                    ),
+                    interpolate_value_bounded(
+                        float(_ds), 0.0, 5.0, 0.5, 0.3
+                    )
+                )
                 if len(_updates) > 0:
-                    print(f"Notable Kill Event: {event}")
+                    print(f"{_player_tracker.player_name} kill streak: {_ks}, death streak: {_ds}")
+
                 for update in _updates:
                     match update:
                         case UpdateTypes.GOT_KILLED:
                             print("OH NO, YOU DIED -> *VIBRATES IN YOU*")
-                            _vibe.add_vibration_order(0.5, 500)
+                            _vibe.add_vibration_order(0.4, 500)
                         case UpdateTypes.KILLED_ENEMY:
                             print("GOOD GIRL/BOY/PUPPY/KITTY -> HAVE A REWARD")
-                            _vibe.add_vibration_order(0.66, 666)
+                            _vibe.add_vibration_order(0.5, 666)
+                        case UpdateTypes.CRIT_KILLED_ENEMY:
+                            print("FAIR AND BALANCED, BITCH! -> *GIBS YOU*")
+                            _vibe.add_vibration_order(0.69, 420)
+                        case UpdateTypes.GOT_CRIT_KILLED:
+                            print("LOL NOOB EZ -> *TOUCHES UR PROSTATE*")
+                            _vibe.add_vibration_order(0.77, 360)
 
 
 if __name__ == "__main__":
+    signal(SIGINT, abort)
     run(main())
