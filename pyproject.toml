@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "mac-toys"
+version = "0.1.0"
+description = ""
+authors = ["Lilith <__lilith@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+requests = "^2.32.3"
+requests-sse = "^0.3.2"
+buttplug-py = "^0.2.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
