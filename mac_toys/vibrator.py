@@ -1,14 +1,72 @@
 import asyncio
 import time
 from asyncio import sleep, run
-from threading import Lock
+from threading import Lock, Thread, get_native_id
 from random import uniform
 from signal import signal, SIGINT
 from buttplug import Client, WebsocketConnector, ProtocolSpec, Device, DisconnectedError
-from typing import Union, cast, Optional
+from typing import Union, cast, Optional, Callable
 from mac_toys.sse_listener import SSEListener, ChatEvent, KillEvent
 from mac_toys.tracker import PlayerTracker, UpdateTypes
 from mac_toys.helpers import interpolate_value_bounded
+
+
+class ValueSlider:
+    current_value: float = None
+    target_value: float = None
+    starting_value: float = None
+    complete: bool = None
+    # Time in ms to fully slide from the starting value to the target
+    slide_time: float = None
+    # Function to call to apply the interim value to.
+    applicator: Callable[[float], None] = None
+    _worker_thread: Thread = None
+    _cancel_flag: bool = None
+
+    # Make a modification every 20ms
+    _application_rate: float = 20.0
+    _application_step: float = None
+
+    def __init__(
+            self,
+            current_value: float,
+            target_value: float,
+            slide_time: float,
+            value_applicator: Callable[[float], None]
+    ) -> None:
+        self.starting_value = current_value
+        self.current_value = self.starting_value
+        self.target_value = target_value
+        self.slide_time = slide_time
+        self.applicator = value_applicator
+        self.complete = False
+        self.cancel_flag = False
+        self._application_step = ((self.target_value - self.starting_value) / self.slide_time) * self._application_rate
+        self._worker_thread = Thread(
+            target=self.slide,
+            name=f"Threaded Value Interpolator {get_native_id()}",
+            daemon=True,
+        )
+
+    def cancel(self) -> None:
+        self._cancel_flag = True
+        self._worker_thread.join()
+
+    def join(self) -> None:
+        self._worker_thread.join()
+
+    def start(self) -> None:
+        self._worker_thread.start()
+
+    def slide(self) -> None:
+        while not (self._cancel_flag or self.complete):
+            time.sleep(self._application_rate / 1000)
+            self.current_value += self._application_step
+            self.applicator(self.current_value)
+
+            # Floating point 'close enough' check
+            if abs(self.target_value - self.current_value) < 0.0001:
+                self.complete = True
 
 
 class Vibrator:
@@ -16,7 +74,7 @@ class Vibrator:
     connector: WebsocketConnector = None
     devices: list[Device] = None
 
-    ## Instantaneous vibrations
+    # Instantaneous vibrations
     current_vibration: float = None
     queue_lock: Lock = None
     # List of vibration orders: [vibrate_intensity, vibrate_time_ms]
@@ -25,7 +83,7 @@ class Vibrator:
     # unused
     suspended_vibrations: list[list[float]] = None
 
-    ## Ambient background vibration
+    # Ambient background vibration
     last_change_time: float = None
     computed_change_rate: float = None
     computed_ambient_vibration: float = None
@@ -33,6 +91,12 @@ class Vibrator:
     ambient_vibration_variance: float = None
     ambient_vibration_change_rate: float = None
     ambient_vibration_change_rate_variance: float = None
+    # For interpolation stuff
+    _initial_intensity: float = None
+    _target_intensity: float = None
+    _step: float = None
+    _interpolation_period: float = None
+    _interpolation_in_progress: bool = None
 
     async def connect_and_scan(self) -> None:
         assert self.connector is not None
@@ -73,6 +137,57 @@ class Vibrator:
         self.computed_change_rate = self.ambient_vibration_change_rate
         self.computed_ambient_vibration = self.ambient_vibration
         self.last_change_time = time.time()
+        # For interpolation stuff
+        self.interpolation_step_period = 10
+        self._initial_intensity = 0.0
+        self._target_intensity = 0.0
+        self._interpolation_period = 0.0
+        self._time_remaining = 0.0
+        self._step = 0.0
+        self._interpolation_in_progress = False
+
+    def _set_target_intensity(self, target_intensity: float) -> None:
+        self._target_intensity = target_intensity
+        self._initial_intensity = self.ambient_vibration
+
+    def _set_interpolation_period(self, period: float) -> None:
+        self._interpolation_period = period
+        self._time_remaining = self._interpolation_period
+        self._step = (((self._target_intensity - self._initial_intensity) / self._interpolation_period)
+                      * self.interpolation_step_period)
+
+    def _interpolation_step(self) -> None:
+        """
+        Run every 10ms?
+        :return: None
+        """
+        self.current_vibration += self._step
+        self._time_remaining -= self.interpolation_step_period
+
+        if abs(self.current_vibration - self._target_intensity) < 1e-6:
+            self._interpolation_in_progress = False
+            self._step = 0.0
+            self._target_intensity = 0.0
+            self._interpolation_period = 0.0
+
+    async def _apply_intensity(self) -> None:
+        futures = []
+        for dev in self.devices:
+            for r_act in dev.actuators:
+                futures.append(r_act.command(self.current_vibration))
+
+        try:
+            async with asyncio.timeout(0.5):
+                await asyncio.gather(*futures, return_exceptions=True)
+        except DisconnectedError:
+            print("Disconnected")
+        except TimeoutError:
+            print("Timed-out")
+
+    def interpolate_to_intensity(self, target_intensity: float, duration: float) -> None:
+        self._set_target_intensity(target_intensity)
+        self._set_interpolation_period(duration)
+        self._interpolation_in_progress = True
 
     def set_device(self):
         self.devices = list(self.client.devices.values())
@@ -261,6 +376,18 @@ async def main():
                             _vibe.add_vibration_order(0.77, 360)
 
 
+def value(new_val: float) -> None:
+    print(f"New value: {new_val} at {time.time()}")
+
+
 if __name__ == "__main__":
-    signal(SIGINT, abort)
-    run(main())
+    # signal(SIGINT, abort)
+    # run(main())
+    print(f"Starting slider at {time.time()}")
+    _slider = ValueSlider(0.0, 1.0, 1000, value)
+    _slider.start()
+    print("sleeping...")
+    time.sleep(1.5)
+    print("attempting to cancel...")
+    _slider.cancel()
+

@@ -87,7 +87,8 @@ class SSEListener(metaclass=Singleton):
         if self.t_subscriber is None:
             _thread = Thread(
                 target=self.mac_subscribe,
-                name="mac-sse-listener-thread"
+                name="mac-sse-listener-thread",
+                daemon=True
             )
 
             self.t_subscriber = _thread
