@@ -10,6 +10,7 @@ python = "^3.11"
 requests = "^2.32.3"
 requests-sse = "^0.3.2"
 buttplug-py = "^0.2.0"
+asyncio = "^3.4.3"
 
 
 [build-system]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from json import loads
 from dataclasses import dataclass
 from threading import Thread, Lock
@@ -99,13 +100,12 @@ class SSEListener(metaclass=Singleton):
         print(f"Starting MAC SSE Subscriber, -> {self.event_endpoint}")
         with EventSource(self.event_endpoint) as event_source:
             try:
+                if self.shutdown_flag:
+                    raise GeneratorExit
                 for event in event_source:
                     # print("++ New event")
                     _event = process_event(event)
                     self.q_subscriber.put(_event)
-
-                    if self.shutdown_flag:
-                        raise GeneratorExit
             except (InvalidStatusCodeError, InvalidContentTypeError):
                 # Ignore these errors for now
                 print("Invalid status code or content type, ignoring message.")
