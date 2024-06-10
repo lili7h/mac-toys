@@ -11,6 +11,7 @@ requests = "^2.32.3"
 requests-sse = "^0.3.2"
 buttplug-py = "^0.2.0"
 asyncio = "^3.4.3"
+rich = "^13.7.1"
 
 
 [build-system]
