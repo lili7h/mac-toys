@@ -532,9 +532,10 @@ def abort(signum, frame):
 
 
 def interaction_pane(output_queue: Queue):
-    while (input("Type 'exit' at any time to exit program (the intensity bar will break, ignore it).\n").lower()
-           != "exit"):
+    prnt("Type 'exit' at any time to exit program (the intensity bar will break, ignore it).\n")
+    while input().lower() != "exit":
         time.sleep(0.05)
+        prnt("Type 'exit' at any time to exit program (the intensity bar will break, ignore it).\n")
 
     prnt("Exiting program...")
     output_queue.put(True)
