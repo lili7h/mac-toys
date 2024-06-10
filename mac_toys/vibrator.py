@@ -5,7 +5,7 @@ __version__ = "0.1.0a"
 import asyncio
 import queue
 import time
-from rich import print as rprint
+from tqdm import tqdm
 from asyncio import sleep, run, get_running_loop, new_event_loop, set_event_loop
 from threading import Lock, Thread, get_native_id
 from queue import Queue
@@ -17,6 +17,10 @@ from mac_toys.sse_listener import SSEListener, ChatEvent, KillEvent, Singleton
 from mac_toys.tracker import PlayerTracker, UpdateTypes
 from mac_toys.helpers import interpolate_value_bounded
 from mac_toys.thread_manager import ThreadedActor, Agent
+
+
+def prnt(message: str) -> None:
+    tqdm.write(message)
 
 
 class ValueSlider:
@@ -231,7 +235,7 @@ class IntensityController(ThreadedActor):
 
         if inherit_ending:
             slider.target_value = _ending
-            
+
         self.instant_intensity_slider = slider
         self.instant_intensity_slider.start()
 
@@ -373,7 +377,7 @@ class AmbienceController(ThreadedActor):
             _now = time.time()
             if _now - self.last_change_time > self.computed_change_rate:
                 if not self.intensity_controller.is_running():
-                    print("Intensity controller thread is not running, cannot control ambience.")
+                    prnt("Intensity controller thread is not running, cannot control ambience.")
                     break
 
                 with self._param_lock:
@@ -397,11 +401,11 @@ class AmbienceController(ThreadedActor):
                 _slider = ValueSlider(
                     self.intensity_controller.get_ambient_intensity(),
                     _new_ambient_intensity,
-                    500.0,
+                    1000,
                     self.intensity_controller.set_ambient_intensity
                 )
                 self.intensity_controller.set_ambient_intensity_slider(_slider)
-        print("Exiting ambience control thread...")
+        prnt("Exiting ambience control thread...")
 
 
 class Vibrator(metaclass=Singleton):
@@ -413,6 +417,8 @@ class Vibrator(metaclass=Singleton):
     agent: Agent = None
     # Current intensity value (inclusive of ambient and instant)
     current_vibration: float = None
+    # intensity status bar
+    pbar: tqdm = None
 
     async def connect_and_scan(self) -> None:
         assert self.connector is not None
@@ -422,22 +428,22 @@ class Vibrator(metaclass=Singleton):
         try:
             await self.client.connect(self.connector)
         except Exception as e:
-            print(f"Could not connect to server, exiting: {e}")
+            prnt(f"Could not connect to server, exiting: {e}")
             return
 
         if len(self.client.devices) == 0:
-            print(f"Scanning for devices now, see you in 10s!")
+            prnt(f"Scanning for devices now, see you in 10s!")
             await self.client.start_scanning()
             await sleep(10)
             await self.client.stop_scanning()
-            print(f"Done.")
+            prnt(f"Done.")
         else:
-            print(f"Found devices connected, assuming no scan needed.")
+            prnt(f"Found devices connected, assuming no scan needed.")
 
         if len(self.client.devices) > 0:
-            print(f"Found {len(self.client.devices)} devices!")
+            prnt(f"Found {len(self.client.devices)} devices!")
         else:
-            print(f"Found no devices :(")
+            prnt(f"Found no devices :(")
 
     def __init__(self, ws_host: str = "127.0.0.1", port: int = 12345):
         self.client = Client("MAC Toys Client", ProtocolSpec.v3)
@@ -450,8 +456,9 @@ class Vibrator(metaclass=Singleton):
         )
 
     def start(self) -> None:
-        rprint("[italics bright_black]Starting controllers...[/italics bright_black]")
+        prnt("Starting controllers...")
         self.agent.start_all()
+        self.pbar = tqdm(total=100, desc="Intensity", dynamic_ncols=True, bar_format='{l_bar}{bar}')
 
     async def _apply_intensity(self) -> None:
         futures = []
@@ -462,9 +469,9 @@ class Vibrator(metaclass=Singleton):
             async with asyncio.timeout(0.5):
                 await asyncio.gather(*futures, return_exceptions=True)
         except DisconnectedError:
-            print("Disconnected")
+            prnt("Disconnected")
         except TimeoutError:
-            print("Timed-out")
+            prnt("Timed-out")
 
     def set_device(self):
         self.devices = list(self.client.devices.values())
@@ -477,10 +484,16 @@ class Vibrator(metaclass=Singleton):
         Sets all actuators in all devices to the given intensity
         """
         if not self.client.connected:
-            print("Tried to issue command while 'Not connected'!")
+            prnt("Tried to issue command while 'Not connected'!")
             return
 
-        await self._apply_intensity()
+        if self.current_vibration is not None:
+            _new_n = round(self.current_vibration * 100)
+            if _new_n != self.pbar.n:
+                self.pbar.update(int(_new_n - self.pbar.n))
+                self.pbar.display()
+
+            await self._apply_intensity()
 
     def apply_instant_intensity(self, initial_intensity: float, duration: float) -> None:
         _inten_controller = cast(IntensityController, self.agent.get_agent('INTCON'))
@@ -497,30 +510,33 @@ class Vibrator(metaclass=Singleton):
             await self.client.connect(self.connector)
 
     async def stop_all(self) -> None:
+        self.pbar.close()
+        self.pbar.clear()
         self.agent.stop_all()
         await self.client.disconnect()
 
 
 def abort(signum, frame):
-    print("Received exit signal, ending...")
+    prnt("Received exit signal, ending...")
     _vibe = Vibrator()
     loop = get_running_loop()
     loop.create_task(_vibe.stop_all())
-    print("Killed vibrator component")
+    prnt("Killed vibrator component")
 
     _inst = SSEListener(event_endpoint=None)
     if _inst.t_subscriber is not None:
         _inst.shutdown_flag = True
         _inst.t_subscriber.join(timeout=2.0)
-    print("Killed SSE Listener...")
+    prnt("Killed SSE Listener...")
     exit(0)
 
 
 def interaction_pane(output_queue: Queue):
-    while input("Type 'exit' at any time to exit program.\n").lower() != "exit":
+    while (input("Type 'exit' at any time to exit program (the intensity bar will break, ignore it).\n").lower()
+           != "exit"):
         time.sleep(0.05)
 
-    rprint("[italic red]Exiting program...[/italic red]")
+    prnt("Exiting program...")
     output_queue.put(True)
 
 
@@ -529,8 +545,8 @@ async def main():
     await _vibe.connect_and_scan()
     _vibe.set_device()
 
-    _name = input("Enter your in-game name as it appears >")
-    _steam_id = input("Enter your steam ID64 (it should look something like 76561198071482715) >")
+    _name = input("Enter your in-game name as it appears > ")
+    _steam_id = input("Enter your steam ID64 (it should look something like 76561198071482715) > ")
 
     # TODO: make this parameterized / pulled from MAC
     _player_tracker = PlayerTracker(_name, _steam_id)
@@ -539,7 +555,7 @@ async def main():
     _last_time = time.time() * 1000
     _time_elapsed: float = 0.0
 
-    rprint("[italic green]Starting vibrator...[/italic green]")
+    prnt("Starting vibrator...")
     _vibe.start()
     _flag_q: Queue = Queue()
     _stop_flag: bool = False
@@ -559,38 +575,32 @@ async def main():
             _updates: list[UpdateTypes]
             if isinstance(event, ChatEvent):
                 _updates = _player_tracker.handle_chat_message(event)
-                if len(_updates) > 0:
-                    rprint(f"[italic bright_black]Notable Chat Event: {event}[/italic bright_black]")
                 for update in _updates:
                     match update:
                         case UpdateTypes.CHAT_YOU_SAID_UWU:
-                            rprint("[bold bright_yellow]YOU SAID UWU/OWO -> GET VIBED[/bold bright_yellow]")
+                            prnt("YOU SAID UWU/OWO -> GET VIBED")
                             _vibe.apply_instant_intensity(0.4, 750.0)
                         case UpdateTypes.CHAT_FUCK_YOU:
-                            rprint("[bold indian_red]SOMEONES ANGRY -> MMM BZZZZZZ[/bold indian_red]")
+                            prnt("SOMEONES ANGRY -> MMM BZZZZZZ")
                             _vibe.apply_instant_intensity(0.3, 500.0)
 
             elif isinstance(event, KillEvent):
                 _ks, _ds, _updates = _player_tracker.add_kill_event(event)
                 cast(AmbienceController, _vibe.agent.get_agent('AMBINTCON')).update_parameters(_ks, _ds)
 
-                if len(_updates) > 0:
-                    rprint(f"[italic bright_black]{_player_tracker.player_name} kill streak: {_ks}, "
-                           f"death streak: {_ds}[/italic bright_black]")
-
                 for update in _updates:
                     match update:
                         case UpdateTypes.GOT_KILLED:
-                            rprint("[bold indian_red]OH NO, YOU DIED -> *VIBRATES IN YOU*[/bold indian_red]")
+                            prnt("OH NO, YOU DIED -> *VIBRATES IN YOU*")
                             _vibe.apply_instant_intensity(0.4, 666.0)
                         case UpdateTypes.KILLED_ENEMY:
-                            rprint("[bold green_yellow]GOOD GIRL/BOY/PUPPY/KITTY -> HAVE A REWARD[/bold green_yellow]")
+                            prnt("GOOD GIRL/BOY/PUPPY/KITTY -> HAVE A REWARD")
                             _vibe.apply_instant_intensity(0.45, 750.0)
                         case UpdateTypes.CRIT_KILLED_ENEMY:
-                            rprint("[bold aquamarine1]FAIR AND BALANCED, BITCH! -> *GIBS YOU*[/bold aquamarine1]")
+                            prnt("FAIR AND BALANCED, BITCH! -> *GIBS YOU*")
                             _vibe.apply_instant_intensity(0.6, 850.0)
                         case UpdateTypes.GOT_CRIT_KILLED:
-                            rprint("[bold dark_orange3]LOL NOOB EZ -> *TOUCHES UR PROSTATE*[/bold dark_orange3]")
+                            prnt("LOL NOOB EZ -> *TOUCHES UR PROSTATE*")
                             _vibe.apply_instant_intensity(0.65, 1200.0)
 
         await _vibe.issue_command()
@@ -603,17 +613,17 @@ async def main():
 
     _thread.join()
     _vibe = Vibrator()
-    rprint("[italic yellow]Attempting stop of all vibrator components...[/italic yellow]")
+    prnt("Attempting stop of all vibrator components...")
     asyncio.ensure_future(_vibe.stop_all(), loop=get_running_loop())
-    rprint("[italic green]Killed vibrator component...[/italic green]")
+    prnt("Killed vibrator component...")
 
-    rprint("[italic yellow]Awaiting soft exit of SSEListener (will force exit after 2s)...[/italic yellow]")
+    prnt("Awaiting soft exit of SSEListener (will force exit after 2s)...")
     _inst = SSEListener(event_endpoint=None)
     if _inst.t_subscriber is not None:
         _inst.shutdown_flag = True
         _inst.t_subscriber.join(timeout=2.0)
-    rprint("[italic green]Killed SSE Listener...[/italic green]")
-    rprint("[italic green]Vibe Controller Exiting...[/italic green]")
+    prnt("Killed SSE Listener...")
+    prnt("Vibe Controller Exiting...")
 
 
 if __name__ == "__main__":
