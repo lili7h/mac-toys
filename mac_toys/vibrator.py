@@ -150,7 +150,7 @@ class ValueSlider:
                 self._running = False
 
 
-class IntensityController:
+class IntensityController(ThreadedActor):
     ambient_intensity_slider: ValueSlider = None
     _ambient_intensity: float = None
     instant_intensity_slider: ValueSlider = None
@@ -182,9 +182,12 @@ class IntensityController:
         self._running = True
         self._applicator_thread.start()
 
-    def stop(self) -> None:
+    def stop(self, *, timeout: float = 1.0) -> None:
         self._running = False
-        self._applicator_thread.join()
+        self._applicator_thread.join(timeout)
+
+    def force_stop(self) -> None:
+        self._running = False
 
     @property
     def combined_intensity(self) -> float:
@@ -219,12 +222,16 @@ class IntensityController:
             if self.instant_intensity_slider.complete:
                 self.instant_intensity_slider.join()
             else:
+                if not inherit_starting:
+                    slider.starting_value += min(0.99, self._instant_intensity)
                 self.instant_intensity_slider.cancel()
 
         if inherit_starting:
             slider.starting_value = self._instant_intensity
+
         if inherit_ending:
             slider.target_value = _ending
+            
         self.instant_intensity_slider = slider
         self.instant_intensity_slider.start()
 
@@ -329,18 +336,18 @@ class AmbienceController(ThreadedActor):
         with self._param_lock:
             self.ambient_vibration = max(
                 interpolate_value_bounded(
-                    float(kill_streak), 0.0, 15.0, 0.1, 0.6
+                    float(kill_streak), 0.0, 15.0, 0.2, 0.6
                 ),
                 interpolate_value_bounded(
-                    float(death_streak), 0.0, 5.0, 0.1, 0.6
+                    float(death_streak), 0.0, 5.0, 0.2, 0.6
                 )
             )
             self.ambient_vibration_variance = max(
                 interpolate_value_bounded(
-                    float(kill_streak), 0.0, 15.0, 0.05, 0.33
+                    float(kill_streak), 0.0, 15.0, 0.1, 0.33
                 ),
                 interpolate_value_bounded(
-                    float(death_streak), 0.0, 5.0, 0.05, 0.33
+                    float(death_streak), 0.0, 5.0, 0.1, 0.33
                 )
             )
             self.ambient_vibration_change_rate = min(
@@ -400,16 +407,16 @@ class AmbienceController(ThreadedActor):
 class Vibrator(metaclass=Singleton):
     client: Client = None
     connector: WebsocketConnector = None
+    # Cache the devices one layer up rather than having to reach into the client every time
     devices: list[Device] = None
-    intensity_controller: IntensityController = None
-    ambient_intensity_controller: AmbienceController = None
-    # Instantaneous vibrations
+    # This agent controls all the ThreadedActors that the Vibrator class instantiates
+    agent: Agent = None
+    # Current intensity value (inclusive of ambient and instant)
     current_vibration: float = None
 
     async def connect_and_scan(self) -> None:
         assert self.connector is not None
 
-        # Finally, we connect.
         # If this succeeds, we'll be connected. If not, we'll probably have some
         # sort of exception thrown of type ButtplugError.
         try:
@@ -435,15 +442,16 @@ class Vibrator(metaclass=Singleton):
     def __init__(self, ws_host: str = "127.0.0.1", port: int = 12345):
         self.client = Client("MAC Toys Client", ProtocolSpec.v3)
         self.connector = WebsocketConnector(f"ws://{ws_host}:{port}")
-        self.intensity_controller = IntensityController(self.set_combined_intensity)
-        self.ambient_intensity_controller = AmbienceController(self.intensity_controller)
+        self.agent = Agent()
+        self.agent.add_agent(
+            "INTCON", IntensityController(self.set_combined_intensity)
+        ).add_agent(
+            "AMBINTCON", AmbienceController(cast(IntensityController, self.agent.get_agent('INTCON')))
+        )
 
     def start(self) -> None:
-        rprint("[italics bright_black]Starting core controller...[/italics bright_black]")
-        self.intensity_controller.start()
-        time.sleep(0.2)
-        rprint("[italics bright_black]Starting ambient controller...[/italics bright_black]")
-        self.ambient_intensity_controller.start()
+        rprint("[italics bright_black]Starting controllers...[/italics bright_black]")
+        self.agent.start_all()
 
     async def _apply_intensity(self) -> None:
         futures = []
@@ -475,21 +483,21 @@ class Vibrator(metaclass=Singleton):
         await self._apply_intensity()
 
     def apply_instant_intensity(self, initial_intensity: float, duration: float) -> None:
+        _inten_controller = cast(IntensityController, self.agent.get_agent('INTCON'))
         _slider = ValueSlider(
             initial_intensity,
             0.0,
             duration,
-            self.intensity_controller.set_instant_intensity
+            _inten_controller.set_instant_intensity
         )
-        self.intensity_controller.set_instant_intensity_slider(_slider, inherit_starting=False, inherit_ending=True)
+        _inten_controller.set_instant_intensity_slider(_slider, inherit_starting=False, inherit_ending=True)
 
     async def check_connection(self) -> None:
         if not self.client.connected:
             await self.client.connect(self.connector)
 
     async def stop_all(self) -> None:
-        self.ambient_intensity_controller.stop()
-        self.intensity_controller.stop()
+        self.agent.stop_all()
         await self.client.disconnect()
 
 
@@ -564,7 +572,7 @@ async def main():
 
             elif isinstance(event, KillEvent):
                 _ks, _ds, _updates = _player_tracker.add_kill_event(event)
-                _vibe.ambient_intensity_controller.update_parameters(_ks, _ds)
+                cast(AmbienceController, _vibe.agent.get_agent('AMBINTCON')).update_parameters(_ks, _ds)
 
                 if len(_updates) > 0:
                     rprint(f"[italic bright_black]{_player_tracker.player_name} kill streak: {_ks}, "

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 from threading import Thread
@@ -37,7 +39,10 @@ class Agent:
     _last_added: dict[str, ActorState | ThreadedActor] = None
     actors: dict[str, dict[str, ActorState | ThreadedActor]] = None
 
-    def add_agent(self, name: str, actor: ThreadedActor) -> None:
+    def __init__(self) -> None:
+        self.actors = {}
+
+    def add_agent(self, name: str, actor: ThreadedActor) -> Agent:
         if name in self.actors:
             _state = self.actors[name].get('state')
             _actor = self.actors[name].get('actor')
@@ -49,6 +54,8 @@ class Agent:
             'actor': actor
         }
         self._last_added = self.actors[name]
+
+        return self
 
     def start(self, actor_name: str = None) -> None:
         if actor_name is None:
@@ -108,3 +115,9 @@ class Agent:
                     self.actors[thread_name]['state'] = ActorState.STOPPED
                 case _:
                     pass
+
+    def get_agent(self, name: str) -> ThreadedActor:
+        if name not in self.actors:
+            raise KeyError("That actor is not in the Agent.")
+
+        return self.actors[name]['actor']
