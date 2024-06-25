@@ -1,0 +1,30 @@
+# This config file is a WIP
+title = "MAC Toys Vibrator Config file"
+
+# 'Ambience' is the constant background vibration that mac-toys applies
+[ambience]
+# Controls the scalars for the 'ambient' vibration based on kill and deathstreak
+[ambience.max_at_value]
+# Default: 15. Scales from killstreak_minimum to killstreak_maximum as you go from
+#              0 kills to 15 kills
+killstreak = 15
+# Default: 15. Scales from deathstreak_minimum to deathstreak_maximum as you go from
+#              0 deaths to 5 deaths
+deathstreak = 5
+
+# Intensity is the vibration strength. 0 -> 1. (i.e. 0.3 is 30% of max power)
+[ambience.intensity]
+killstreak_minimum = 0.05
+killstreak_maximum = 0.3
+deathstreak_minimum = 0.05
+deathstreak_maximum = 0.3
+
+# Intensity variance is the range in which it can randomly vary from the exact intensity
+# i.e. if intensity is 0.25, and intensity variance is 0.1, the actual computed variance
+#      can be 0.15 < x < 0.35, where x is a uniform random variable.
+[ambience.intensity_variance]
+killstreak_minimum = 0.05
+killstreak_maximum = 0.25
+deathstreak_minimum = 0.05
+deathstreak_maximum = 0.25
+
