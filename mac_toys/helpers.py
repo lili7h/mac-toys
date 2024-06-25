@@ -1,3 +1,4 @@
+from tqdm import tqdm
 
 
 def interpolate_value_unbounded(
@@ -20,3 +21,7 @@ def interpolate_value_bounded(
     return max(right_min, min(right_max, interpolate_value_unbounded(
         value, left_min, left_max, right_min, right_max
     )))
+
+
+def prnt(message: str) -> None:
+    tqdm.write(message)
