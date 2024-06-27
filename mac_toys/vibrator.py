@@ -20,6 +20,7 @@ from mac_toys.sse_listener import SSEListener, ChatEvent, KillEvent, Singleton
 from mac_toys.tracker import PlayerTracker, UpdateTypes
 from mac_toys.thread_manager import Agent
 from mac_toys.interpolation import ValueSlider
+from mac_toys.config import Config
 
 from mac_toys.vibration.ambience import AmbienceController
 from mac_toys.vibration.intensity import IntensityController
@@ -27,6 +28,7 @@ from mac_toys.vibration.intensity import IntensityController
 
 class Vibrator(metaclass=Singleton):
     client: Client = None
+    config: Config = None
     connector: WebsocketConnector = None
     # Cache the devices one layer up rather than having to reach into the client every time
     devices: list[Device] = None
@@ -62,15 +64,16 @@ class Vibrator(metaclass=Singleton):
         else:
             prnt(f"Found no devices :(")
 
-    def __init__(self, ws_host: str = "127.0.0.1", port: int = 12345):
+    def __init__(self, config: Config, ws_host: str = "127.0.0.1", port: int = 12345):
         self.client = Client("MAC Toys Client", ProtocolSpec.v3)
         self.connector = WebsocketConnector(f"ws://{ws_host}:{port}")
         self.agent = Agent()
         self.agent.add_agent(
             "INTCON", IntensityController(self.set_combined_intensity)
         ).add_agent(
-            "AMBINTCON", AmbienceController(cast(IntensityController, self.agent.get_agent('INTCON')))
+            "AMBINTCON", AmbienceController(cast(IntensityController, self.agent.get_agent('INTCON')), config)
         )
+        self.config = config
 
     def start(self) -> None:
         prnt("Starting controllers...")
@@ -158,16 +161,14 @@ def interaction_pane(output_queue: Queue):
     output_queue.put(True)
 
 
-async def main():
-    _vibe = Vibrator(ws_host="localhost")
+async def main(config: Config):
+    _vibe = Vibrator(config, ws_host="localhost")
     await _vibe.connect_and_scan()
     _vibe.set_device()
 
-    _name = input("Enter your in-game name as it appears > ")
-    _steam_id = input("Enter your steam ID64 (it should look something like 76561198071482715) > ")
-
-    # TODO: make this parameterized / pulled from MAC
-    _player_tracker = PlayerTracker(_name, _steam_id)
+    _name = config.config()['in_game_name']
+    _steam_id = config.config()['steamid_64']
+    _player_tracker = PlayerTracker(_name, _steam_id, config)
     _sse_listener = SSEListener.with_mac()
 
     _last_time = time.time() * 1000
@@ -193,33 +194,37 @@ async def main():
             _updates: list[UpdateTypes]
             if isinstance(event, ChatEvent):
                 _updates = _player_tracker.handle_chat_message(event)
-                for update in _updates:
-                    match update:
-                        case UpdateTypes.CHAT_YOU_SAID_UWU:
-                            prnt("YOU SAID UWU/OWO -> GET VIBED")
-                            _vibe.apply_instant_intensity(0.4, 750.0)
-                        case UpdateTypes.CHAT_FUCK_YOU:
-                            prnt("SOMEONES ANGRY -> MMM BZZZZZZ")
-                            _vibe.apply_instant_intensity(0.3, 500.0)
-
             elif isinstance(event, KillEvent):
                 _ks, _ds, _updates = _player_tracker.add_kill_event(event)
                 cast(AmbienceController, _vibe.agent.get_agent('AMBINTCON')).update_parameters(_ks, _ds)
+            else:
+                _updates = []
 
-                for update in _updates:
-                    match update:
-                        case UpdateTypes.GOT_KILLED:
-                            prnt("OH NO, YOU DIED -> *VIBRATES IN YOU*")
-                            _vibe.apply_instant_intensity(0.4, 666.0)
-                        case UpdateTypes.KILLED_ENEMY:
-                            prnt("GOOD GIRL/BOY/PUPPY/KITTY -> HAVE A REWARD")
-                            _vibe.apply_instant_intensity(0.45, 750.0)
-                        case UpdateTypes.CRIT_KILLED_ENEMY:
-                            prnt("FAIR AND BALANCED, BITCH! -> *GIBS YOU*")
-                            _vibe.apply_instant_intensity(0.6, 850.0)
-                        case UpdateTypes.GOT_CRIT_KILLED:
-                            prnt("LOL NOOB EZ -> *TOUCHES UR PROSTATE*")
-                            _vibe.apply_instant_intensity(0.65, 1200.0)
+            for update in _updates:
+                if update is None:
+                    continue
+
+                _inten = config.instant_intensity(update)
+                _duration = config.instant_times(update)
+                _vibe.apply_instant_intensity(_inten, float(_duration))
+
+                match update:
+                    case UpdateTypes.CHAT_YOU_SAY:
+                        prnt("YOU SAID A FORBIDDEN WORD -> GET VIBED")
+                    case UpdateTypes.CHAT_ANY_SAY:
+                        prnt("WHAT A NICE PERSON -> MMM BZZZZZZ")
+                    case UpdateTypes.GOT_KILLED:
+                        prnt("OH NO, YOU DIED -> *VIBRATES IN YOU*")
+                    case UpdateTypes.KILLED_ENEMY:
+                        prnt("GOOD GIRL/BOY/PUPPY/KITTY -> HAVE A REWARD")
+                    case UpdateTypes.CRIT_KILLED_ENEMY:
+                        prnt("FAIR AND BALANCED, BITCH! -> *GIBS YOU*")
+                    case UpdateTypes.GOT_CRIT_KILLED:
+                        prnt("LOL NOOB EZ -> *TOUCHES UR PROSTATE*")
+                    case UpdateTypes.REMOVED_DOMINATION:
+                        prnt("WOW NICE WORK! Domination removed...")
+                    case UpdateTypes.DOMINATED_ENEMY:
+                        prnt("YOUR SO HOT! Dominating enemy...")
 
         await _vibe.issue_command()
         try:
@@ -230,7 +235,6 @@ async def main():
             pass
 
     _thread.join()
-    _vibe = Vibrator()
     prnt("Attempting stop of all vibrator components...")
     asyncio.ensure_future(_vibe.stop_all(), loop=get_running_loop())
     prnt("Killed vibrator component...")
@@ -246,4 +250,4 @@ async def main():
 
 if __name__ == "__main__":
     signal(SIGINT, abort)
-    run(main())
+    run(main(Config()))

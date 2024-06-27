@@ -1,8 +1,43 @@
 # This config file is a WIP
 title = "MAC Toys Vibrator Config file"
+in_game_name = "werewolf paws"
+steamid_64 = 76561198071482715
+
+[instant]
+# The slide time it takes to go from the given intensity to 0
+[instant.times]
+on_death = 1200
+on_crit_death = 2200
+on_kill = 1800
+on_crit_kill = 2600
+on_you_chat_msg = 900
+on_any_chat_msg = 780
+on_domination = 2000
+on_dominated = 1600
+on_undominated = 2200
+on_lost_domination = 1750
+
+# The intensity of instantenous events
+[instant.intensity]
+on_death = 0.2
+on_kill = 0.30
+on_crit_kill = 0.4
+on_crit_death = 0.5
+on_you_chat_msg = 0.3
+on_any_chat_msg = 0.2
+on_domination = 0.5
+on_dominated = 0.45
+on_undominated = 0.45
+on_lost_domination = 0.4
+
+[instant.chat_messages]
+trigger_on_you_say = ["owo", "uwu", "fuck", "*pets you*", "fag"]
+trigger_on_any_say = ["bot", "cheater", "fuck you", "fag", "faggot", "wtf"]
 
 # 'Ambience' is the constant background vibration that mac-toys applies
 [ambience]
+# Transition time in milliseconds
+transition_time = 1000
 # Controls the scalars for the 'ambient' vibration based on kill and deathstreak
 [ambience.max_at_value]
 # Default: 15. Scales from killstreak_minimum to killstreak_maximum as you go from
@@ -27,4 +62,26 @@ killstreak_minimum = 0.05
 killstreak_maximum = 0.25
 deathstreak_minimum = 0.05
 deathstreak_maximum = 0.25
+
+# The change rate is the time in seconds between ambience vibration intensity changes
+[ambience.change_rate]
+# The maximum value is used when the killstreak is 0
+killstreak_maximum = 6.9
+# The maximum value is used when the killstreak is at the
+# specified ambience.max_at_value.killstreak value
+killstreak_minimum = 2.5
+# The maxmimum value is used when the deathstreak is 0
+deathstreak_maximum = 6.9
+deathstreak_minimum = 3.1
+
+# The change rate variance is the range in which the change rate can randomly vary from
+# the exact value.
+[ambience.change_rate_variance]
+# The maximum value is used when the killstreak is 0
+killstreak_maximum = 0.5
+killstreak_minimum = 0.2
+# The maximum value is used when the deathstreak is 0
+deathstreak_maximum = 0.5
+deathstreak_minimum = 0.3
+
 

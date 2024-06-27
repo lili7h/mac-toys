@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 from enum import Enum, auto
 from mac_toys.sse_listener import Singleton, KillEvent, ChatEvent
-
 
 SAFE_WORD_STOP: str = "PLUG STOP"
 
@@ -19,6 +20,8 @@ class UpdateTypes(Enum):
     GOT_MENTIONED = auto()
     CHAT_FUCK_YOU = auto()
     CHAT_YOU_SAID_UWU = auto()
+    CHAT_YOU_SAY = auto()
+    CHAT_ANY_SAY = auto()
     # Emergency stop chat message
     CHAT_PLAYER_DEMANDED_STOP = auto()
 
@@ -32,27 +35,24 @@ class PlayerTracker(metaclass=Singleton):
     dominating: list[str] = None
     kill_streak: int = None
     death_streak: int = None
+    forbidden_you_words: list[str] = None
+    forbidden_any_words: list[str] = None
 
     def handle_chat_message(self, event: ChatEvent) -> list[UpdateTypes]:
         _updates: list[UpdateTypes] = []
         _author = event.author[1]
-        if "fuck you" in event.message.lower():
-            _updates.append(UpdateTypes.CHAT_FUCK_YOU)
+        _sentence = event.message.lower()
 
         if _author == self.player:
-            # Check if player said uwu/owo (checks whole word match, doesn't include things like 'wowo')
-            _words = event.message.lower().split()
-            if "uwu" in _words:
-                _updates.append(UpdateTypes.CHAT_YOU_SAID_UWU)
-            elif "owo" in _words:
-                _updates.append(UpdateTypes.CHAT_YOU_SAID_UWU)
+            if any([x in _sentence for x in self.forbidden_you_words]):
+                _updates.append(UpdateTypes.CHAT_YOU_SAY)
 
             # Let the player drop a safeword in chat for relief
             if event.message.strip() == SAFE_WORD_STOP:
                 _updates.append(UpdateTypes.CHAT_PLAYER_DEMANDED_STOP)
         else:
-            if self.player_name.lower() in event.message.lower():
-                _updates.append(UpdateTypes.GOT_MENTIONED)
+            if any([x in _sentence for x in self.forbidden_any_words]):
+                _updates.append(UpdateTypes.CHAT_ANY_SAY)
 
         return _updates
 
@@ -118,7 +118,7 @@ class PlayerTracker(metaclass=Singleton):
 
         return self.kill_streak, self.death_streak, _updates
 
-    def __init__(self, name: str, steam_id: str) -> None:
+    def __init__(self, name: str, steam_id: str, config) -> None:
         self.player = steam_id
         self.player_name = name
         self.kill_streak = 0
@@ -127,3 +127,5 @@ class PlayerTracker(metaclass=Singleton):
         self.dominated_by = []
         self.deaths_by_tracker = {}
         self.dominating = []
+        self.forbidden_any_words = config.instant_chat_messages('trigger_on_any_say')
+        self.forbidden_you_words = config.instant_chat_messages('trigger_on_you_say')
