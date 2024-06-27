@@ -18,16 +18,20 @@
   - Your SteamID64 should look something like '76561198071482715' and can be found on any steam profile lookup website
   - Your IGN should be as people will see it in TF2
 
+This app is confirmed working with at least one Satisfyer and at least one Lovense toy.
+
 ## Usage
 
 - Clone this repository into a good folder (like your Documents)
 - Start the MAC client-backend binary
 - Move into the MAC Toys directory in Powershell/bash
+- Modify the `config.toml` file!
+  - At the very least, you need to fill out the 'in_game_name' and 'steamid_64' fields.
+  - Feel free to modify any other values to your hearts desire. 
+  - Avoid: setting intensity values above 1 or below 0, as they will do nothing
 - Run `poetry install` to install the python dependencies
 - Run `poetry shell` to enter the virtual environment
-- Run `python main.py` to begin the program. 
-  - Enter your in game name when prompted
-  - Enter your Steam ID64 when prompted
+- Run `python main.py` to begin the program.
   - Vibration should start within 5s!
 
 ## Rules
@@ -35,13 +39,15 @@
 There is a background 'ambient' vibration that scales its intensity with your current kill and death streak
 
 There are also the following 'instant' vibrations that occur:
- - If YOU type 'owo' or 'uwu' in the chat (with any capitalisation), you get vibrated
- - If ANYONE types 'fuck you' in the chat (with any capitalisation), you get vibrated
- - If ANYONE mentions your name in the chat (with any capitalisation), you get vibrated
+ - There is two sets of 'forbidden' words controlled by the config file. If these words are said by the right people, you will get vibrated
  - If you get a kill, you get vibrated
    - If it's a crit kill, you get vibrated more
  - If you get killed, you get vibrated
    - If it's a crit death, you get vibrated more
+ - If you get a (true, i.e. not including assists) domination, you get vibrated more
+ - If you get true dominated, you get vibrated more
+ - If you lose a domination, you get vibrated more
+ - If you get revenge on someone dominating you, you get vibrated more.
 
 ## Known issues/missing features
 
@@ -51,6 +57,3 @@ in the domination status.
 The app cannot track the destruction of buildings or assists.
 
 The app cannot track damage events, only kills, deaths and chat events.
-
-The name mentioning only works if your full IGN as entered at the start appears anywhere in a message. (short hand
-forms of your name will not trigger a vibration)
